@@ -1,0 +1,23 @@
+`comment("
+Alert Title: WordPress Vulnerability Scan Detected (WPScan Reconnaissance)
+Severity: Medium
+MITRE ATT&CK: T1190 (Exploit Public-Facing Application), T1595.002 (Active Scanning: Vulnerability Scanning)
+Target Log Source: web_access (Apache / Nginx Access Logs)
+")`
+index=web sourcetype="access_common" (uri="/wp-login.php" OR uri="/wp-admin" OR user_agent="WPScan")
+| eval Client_IP=coalesce(clientip, src)
+| eval Request_URI=uri
+comment("Step 1: Aggregate high-frequency requests to sensitive endpoints")
+| bin _time span=5m
+| stats
+count as Request_Count,
+dc(Request_URI) as unique_endpoints_requested,
+values(user_agent) as user_agents_used,
+values(status) as http_status_codes,
+latest(_time) as Last_Seen
+by Client_IP, _time
+comment("Step 2: Filter for abnormal scan volume indicative of automated enumeration")
+| where Request_Count >= 30 OR user_agent="WPScan"
+| convert ctime(Last_Seen)
+| table Last_Seen, Client_IP, Request_Count, unique_endpoints_requested, http_status_codes, user_agents_used
+| sort - Request_Count
