@@ -1,0 +1,36 @@
+`comment("
+================================================================================
+Alert Title: Suspicious High-Volume Failed Logons Followed by Successful Auth
+Severity: High
+MITRE ATT&CK: T1110 (Brute Force), T1078 (Valid Accounts)
+Target Log Source: WinEventLog:Security (Event IDs 4625, 4624)
+================================================================================
+")`
+
+index=security sourcetype="WinEventLog:Security" (EventCode=4625 OR EventCode=4624)
+    Logon_Type IN (2, 3, 10) 
+    TargetUserName!="*$" 
+| eval Status=if(EventCode=4625, "Failure", "Success")
+| eval Source_IP=coalesce(IpAddress, WorkstationName, "Unknown")
+| where Source_IP!="-" AND Source_IP!="127.0.0.1"
+
+`comment("Step 1: Aggregate activity per source over a 15-minute sliding window")`
+| stats 
+    count(eval(Status="Failure")) as Failure_Count,
+    count(eval(Status="Success")) as Success_Count,
+    values(TargetUserName) as Targeted_Accounts,
+    dc(TargetUserName) as Unique_Account_Count,
+    latest(_time) as Last_Activity,
+    earliest(_time) as First_Activity
+    by Source_IP, Logon_Type
+
+`comment("Step 2: Filter for threshold breaches indicative of brute force")`
+| where Failure_Count >= 10 AND Success_Count >= 1
+
+`comment("Step 3: Enrich with timeframe metadata and calculate attack duration")`
+| eval Duration_Minutes=round((Last_Activity - First_Activity) / 60, 2)
+| convert ctime(First_Activity) ctime(Last_Activity)
+
+`comment("Step 4: Format final analyst triage output")`
+| table First_Activity, Last_Activity, Source_IP, Logon_Type, Failure_Count, Success_Count, Unique_Account_Count, Targeted_Accounts, Duration_Minutes
+| sort - Failure_Count
