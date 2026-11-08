@@ -1,0 +1,24 @@
+`comment("
+================================================================================
+Alert Title: Suspicious Addition of Account to Privileged Groups
+Severity: Medium/High
+MITRE ATT&CK: T1136.001 (Create Account: Local Account), T1098 (Account Manipulation)
+Target Log Source: WinEventLog:Security (Event IDs 4720, 4728, 4732)
+================================================================================
+")`
+
+index=security sourcetype="WinEventLog:Security" (EventCode=4720 OR EventCode=4728 OR EventCode=4732)
+| rename TargetUserName as Created_Account, SubjectUserName as Admin_Performing_Action, GroupName as Privileged_Group
+| eval Action_Type=case(EventCode=4720, "Account Created", EventCode=4728, "Added to Security Group", EventCode=4732, "Added to Local Group")
+
+`comment("Filter for high-risk groups like Domain Admins or local Administrators")`
+| where Privileged_Group IN ("Domain Admins", "Enterprise Admins", "Administrators", "Schema Admins")
+
+| stats 
+    values(Action_Type) as Actions_Taken,
+    values(Admin_Performing_Action) as Admin_Account,
+    values(Computer) as Target_System,
+    latest(_time) as Event_Time
+    by Created_Account, Privileged_Group
+| convert ctime(Event_Time)
+| table Event_Time, Target_System, Admin_Account, Created_Account, Privileged_Group, Actions_Taken
